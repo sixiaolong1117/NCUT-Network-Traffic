@@ -1,5 +1,7 @@
 # NCUT Network Traffic
 
+<img src="NCUT%20Network%20Traffic/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png" width="128" alt="NCUT Network Traffic App 图标">
+
 北方工业大学校园网流量余量 macOS 菜单栏小工具。
 
 > **声明：个人非官方作品，与北方工业大学及学校网络中心无关。**
@@ -11,7 +13,7 @@
 - 点击下拉查看已用流量、套餐、在线设备数、上次更新时间
 - 连上校园网（`NCUT` / `NCUT-AUTO`）时自动查询，其余时间显示离线
 
-## 隐私与安全（给较真的人看的）
+## 隐私与安全
 
 - **只读查询**：只调校园网自助 portal 的 `rad_user_info` 只读接口，不登录、不绕过任何认证。未登录就显示"未登录"，请去浏览器完成认证
 - **不碰密码**：代码里没有任何密码框、没有任何凭证存储，也永远不会加自动登录功能
