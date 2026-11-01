@@ -1,0 +1,121 @@
+# 自动构建 + 自动发布到 GitHub Release
+#
+# 触发方式：
+# - 推送 tag（如 v1.0.0）→ 构建 → 自动创建 GitHub Release 并上传 ZIP 包
+# - 推送到 master / 提 PR / 手动触发 → 只构建，做 CI 检查，不发布
+# - 手动触发时可填 version（如 v1.0.1）来验证带版本号的打包
+#
+# 发版流程：git tag v1.0.0 && git push origin v1.0.0
+# 注意：构建产物为临时签名（ad-hoc），未经过 Apple 公证，
+# macOS Sequoia(15)+ 已移除右键 → 打开绕过 Gatekeeper。
+# 用户首次打开：双击 → 点 Done → 系统设置 → 隐私与安全 → 安全性 → Open Anyway。
+# 如需免提示分发，需配置 Developer ID 证书+公证后扩展此脚本。
+
+name: 构建与发布
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（例如 v1.0.1，不填则用 dev 快照版本）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # 发 Release
+  actions: write # 上传 artifact（只声明 contents 时其余 scope 默认为 none，缺了会 403）
+
+jobs:
+  build:
+    name: 构建 macOS App
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 选择最新的 Xcode
+        run: |
+          echo "本机已安装的 Xcode："
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          LATEST="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort | tail -n 1)"
+          if [ -n "$LATEST" ]; then sudo xcode-select -s "$LATEST"; fi
+          xcodebuild -version
+
+      - name: 解析版本号
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
+          else
+            TAG=""
+          fi
+          if [ -n "$TAG" ]; then
+            VERSION="${TAG#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "解析结果： version=${VERSION} build=${GITHUB_RUN_NUMBER} tag=${TAG}"
+
+      - name: 构建 Release（CI 免签名）
+        run: |
+          xcodebuild \
+            -project "NCUT Network Traffic.xcodeproj" \
+            -scheme "NCUT Network Traffic" \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
+            build
+
+      - name: 临时签名并打包 ZIP
+        run: |
+          APP="build/DerivedData/Build/Products/Release/NCUT Network Traffic.app"
+          test -d "$APP" || { echo "找不到构建产物：$APP"; exit 1; }
+          # ad-hoc 签名（仍未公证，Sequoia+ 需到 系统设置 → 隐私与安全 → Open Anyway 放行，右键打开已无效）
+          codesign --force --deep --sign - "$APP"
+          # 坏包直接在这里失败，不让它流进 Release
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl -a -vvv "$APP" || true # ad-hoc 预期 rejected，仅打印信息不断构建
+          mkdir -p dist
+          ditto -c -k --keepParent "$APP" "dist/NCUT-Network-Traffic-${{ steps.ver.outputs.version }}-macOS.zip"
+          (cd dist && shasum -a 256 ./*.zip > SHA256SUMS.txt)
+          ls -lh dist
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: NCUT-Network-Traffic-${{ steps.ver.outputs.version }}-macOS
+          path: dist/*
+          retention-days: 30
+
+      - name: 发布到 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            > 该版本为 ad-hoc 签名，未经 Apple 公证（macOS Sequoia 15+ / Tahoe 26 右键 → 打开已无效）。
+            首次打开：
+            1. 双击 App → 弹窗点 `Done`
+            2. `系统设置 → 隐私与安全 → 安全性` → 点 `Open Anyway` → 认证 → `打开`
+            3. `Open Anyway` 只在拦截后约 1 小时内出现，过期请重新双击一次再去看。
+            备选（终端）：`xattr -dr com.apple.quarantine "/Applications/NCUT Network Traffic.app"`
+          prerelease: ${{ contains(github.ref_name, '-') }}
