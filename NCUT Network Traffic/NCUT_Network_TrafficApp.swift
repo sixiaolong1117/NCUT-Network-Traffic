@@ -2,15 +2,11 @@ import SwiftUI
 
 @main
 struct NCUT_Network_TrafficApp: App {
-    @StateObject private var store = TrafficStore()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        MenuBarExtra {
-            ContentView()
-                .environmentObject(store)
-        } label: {
-            Label(store.menuTitle, systemImage: store.menuIcon)
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
     }
 }
