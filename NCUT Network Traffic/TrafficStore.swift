@@ -16,11 +16,15 @@ final class TrafficStore: ObservableObject {
     @Published var info: TrafficInfo?
     @Published var lastUpdated: Date?
     @Published var isRefreshing = false
+    let daily = DailyUsageStore()
 
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
+    private var bag = Set<AnyCancellable>()
 
     init() {
+        // ponytail: 嵌套 ObservableObject 不会自动刷新父视图，转发一次。
+        daily.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bag)
         // ponytail: 自举，开机即查，不依赖 MenuBarExtra 弹窗是否点开过。
         Task { @MainActor [weak self] in self?.start() }
     }
@@ -74,6 +78,7 @@ final class TrafficStore: ObservableObject {
                 info = r
                 lastUpdated = r.fetchedAt
                 status = .ok
+                daily.record(remainBytes: r.remainBytes, at: r.fetchedAt)
                 #if DEBUG
                 print("[NCUT] ok remain=\(r.remainBytes) used=\(r.usedBytes)")
                 #endif

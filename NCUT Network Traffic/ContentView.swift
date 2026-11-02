@@ -10,6 +10,8 @@ struct ContentView: View {
             Divider()
             details
             Divider()
+            dailySection
+            Divider()
             buttons
         }
         .padding(14)
@@ -59,6 +61,100 @@ struct ContentView: View {
             }
             .font(.caption)
         }
+    }
+
+    @ViewBuilder
+    private var dailySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("按日用量 · 官网余量差值").font(.caption).foregroundStyle(.secondary)
+            let days = store.daily.recentDays(7)
+            HStack(spacing: 12) {
+                Text("今日 \(shortUsage(days.last))").font(.caption)
+                Text("昨日 \(shortUsage(days.count >= 2 ? days[days.count - 2] : nil))").font(.caption).foregroundStyle(.secondary)
+            }
+            if store.daily.snapshots.isEmpty {
+                Text("联网成功查询后自动记录").font(.caption2).foregroundStyle(.tertiary)
+            } else {
+                HStack(alignment: .bottom, spacing: 6) {
+                    let maxV = max(days.compactMap { $0.usedBytes }.max() ?? 1, 1)
+                    ForEach(days) { d in
+                        VStack(spacing: 2) {
+                            Text(topLabel(d)).font(.system(size: 8)).foregroundStyle(.secondary)
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(d.isReset ? Color.orange.opacity(0.5) : Color.accentColor.opacity(d.usedBytes == nil ? 0.15 : 1))
+                                .frame(height: barHeight(d.usedBytes, maxBytes: maxV))
+                            Text(dayLabel(d.date)).font(.system(size: 8)).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: 84)
+                // ponytail: 历史不限制天数，必须封在滚动区里，否则几年后弹窗被撑出屏幕。
+                ScrollView {
+                    ForEach(store.daily.monthlyGroups(), id: \.monthID) { g in
+                        DisclosureGroup("\(monthTitle(g.monthID)) · 共用 \(ByteFormat.detail(g.days.compactMap(\.usedBytes).reduce(0, +)))") {
+                            ForEach(g.days) { d in
+                                HStack {
+                                    Text(rowLabel(d)).font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(rowUsage(d)).font(.caption)
+                                }
+                            }
+                        }
+                        .font(.caption)
+                    }
+                }
+                .frame(maxHeight: 220)
+            }
+        }
+    }
+
+    private func shortUsage(_ d: DayUsage?) -> String {
+        guard let d, let v = d.usedBytes else { return "—" }
+        if d.isReset { return "充值" }
+        return shortBytes(v) + (d.isEstimate ? "*" : "")
+    }
+
+    private func topLabel(_ d: DayUsage) -> String {
+        guard let v = d.usedBytes else { return "—" }
+        if d.isReset { return "充" }
+        if v == 0 { return "0" }
+        return shortBytes(v)
+    }
+
+    private func shortBytes(_ bytes: Int64) -> String {
+        let g = Double(bytes) / 1024 / 1024 / 1024
+        if g >= 1 { return ByteFormat.menu(bytes) }
+        return String(format: "%.0fM", Double(bytes) / 1024 / 1024)
+    }
+
+    private func barHeight(_ bytes: Int64?, maxBytes: Int64) -> CGFloat {
+        guard let bytes, bytes > 0 else { return 3 }
+        return Swift.max(3, 56 * CGFloat(Double(bytes) / Double(maxBytes)))
+    }
+
+    private func dayLabel(_ date: Date) -> String {
+        let c = Calendar.current.dateComponents([.month, .day], from: date)
+        return "\(c.month ?? 0)/\(c.day ?? 0)"
+    }
+
+    private func monthTitle(_ monthID: String) -> String {
+        let p = monthID.split(separator: "-").compactMap { Int($0) }
+        guard p.count == 2 else { return monthID }
+        return "\(p[0])年\(p[1])月"
+    }
+
+    private func rowLabel(_ d: DayUsage) -> String {
+        var s = dayLabel(d.date)
+        if d.isEstimate { s += " *估算" }
+        if d.isReset { s += " 充值+\(shortBytes(d.resetGainBytes))" }
+        return s
+    }
+
+    private func rowUsage(_ d: DayUsage) -> String {
+        guard let v = d.usedBytes else { return "—" }
+        if d.isReset { return "0" }
+        return ByteFormat.detail(v)
     }
 
     private var buttons: some View {
