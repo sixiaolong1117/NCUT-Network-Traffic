@@ -3,6 +3,8 @@ import Foundation
 // ponytail: 用 JSONSerialization 而不是 Codable，SRun 各版本字段时而 Int 时而 String，Any 兜底最少代码。
 struct TrafficInfo {
     let remainBytes: Int64
+    let packageRemainBytes: Int64
+    let totalRemainBytes: Int64
     let usedBytes: Int64
     let userName: String
     let productName: String
@@ -44,6 +46,10 @@ enum SRunClient {
         } catch {
             throw SRunError.network(error)
         }
+        return try parse(data)
+    }
+
+    static func parse(_ data: Data) throws -> TrafficInfo {
         guard let text = String(data: data, encoding: .utf8) else {
             throw SRunError.badResponse("非 UTF-8")
         }
@@ -62,32 +68,37 @@ enum SRunClient {
             throw SRunError.notOnline(err)
         }
 
-        func i64(_ key: String) -> Int64 {
+        func i64(_ key: String) -> Int64? {
             if let v = obj[key] as? Int64 { return v }
-            if let v = obj[key] as? Int { return Int64(v) }
-            if let v = obj[key] as? Double { return Int64(v) }
-            if let v = obj[key] as? String, let p = Int64(v) { return p }
-            if let v = obj[key] as? NSNumber { return v.int64Value }
-            return 0
+            if let v = obj[key] as? String { return Int64(v) }
+            return nil
         }
         func str(_ key: String) -> String {
             if let v = obj[key] as? String { return v }
             if let v = obj[key] as? NSNumber { return v.stringValue }
             return ""
         }
-        func int(_ key: String) -> Int {
-            let v = i64(key)
-            return v > 0 ? Int(v) : 0
+        func counter(_ key: String) -> Int64 {
+            i64(key) ?? (obj[key] as? NSNumber)?.int64Value ?? 0
         }
+
+        guard let remain = i64("remain_bytes"), remain >= 0,
+              let packageRemain = i64("package_remain_bytes"), packageRemain >= 0 else {
+            throw SRunError.badResponse("缺少有效的余量字段")
+        }
+        let (totalRemain, overflow) = remain.addingReportingOverflow(packageRemain)
+        guard !overflow else { throw SRunError.badResponse("总剩余流量超出范围") }
 
         let product = str("products_name").isEmpty ? str("billing_name") : str("products_name")
         return TrafficInfo(
-            remainBytes: i64("remain_bytes"),
-            usedBytes: i64("sum_bytes"),
+            remainBytes: remain,
+            packageRemainBytes: packageRemain,
+            totalRemainBytes: totalRemain,
+            usedBytes: counter("sum_bytes"),
             userName: str("user_name"),
             productName: product,
             onlineIP: str("online_ip"),
-            deviceCount: int("online_device_total"),
+            deviceCount: Int(max(0, counter("online_device_total"))),
             fetchedAt: Date()
         )
     }

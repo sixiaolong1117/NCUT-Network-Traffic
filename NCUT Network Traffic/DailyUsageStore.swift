@@ -1,10 +1,17 @@
 import Foundation
 import Combine
 
-/// 按日统计：只存官网 remain 快照，用「前一日末次 - 当日末次」算用量。
+/// 按日统计：保存官网总剩余流量快照，用「前一日末次 - 当日末次」算用量。
 /// 不碰本机网卡计数，多设备共享账号算的是账号总量。
 struct DaySnapshot: Codable {
-    var lastRemain: Int64
+    let lastRemain: Int64
+    // 旧快照缺少此字段，只记录了普通剩余流量。
+    let includesPackage: Bool?
+
+    func previousRemain(from previous: DaySnapshot?) -> Int64? {
+        guard let previous, previous.includesPackage == includesPackage else { return nil }
+        return previous.lastRemain
+    }
 }
 
 struct DayUsage: Identifiable {
@@ -37,13 +44,12 @@ final class DailyUsageStore: ObservableObject {
 
     // MARK: - record
 
-    func record(remainBytes: Int64, at date: Date = Date()) {
-        // remain<=0 只可能是 portal 字段改名导致 i64 兜底成 0，记了就是一笔巨额假用量，且历史删不掉。
-        guard remainBytes > 0 else { return }
+    func record(totalRemainBytes: Int64, at date: Date = Date()) {
+        guard totalRemainBytes >= 0 else { return }
         let id = Self.dayID(date, calendar: calendar)
         // 值没变就不写盘不刷 UI，5 分钟一次轮询里大多数时候走这里。
-        guard snapshots[id]?.lastRemain != remainBytes else { return }
-        snapshots[id] = DaySnapshot(lastRemain: remainBytes)
+        if let current = snapshots[id], current.includesPackage == true, current.lastRemain == totalRemainBytes { return }
+        snapshots[id] = DaySnapshot(lastRemain: totalRemainBytes, includesPackage: true)
         Self.save(snapshots)
     }
 
@@ -54,7 +60,7 @@ final class DailyUsageStore: ObservableObject {
         guard let cur = snapshots[dayID] else { return nil }
         let prevID = snapshots.keys.filter { $0 < dayID }.max()
         return Self.makeUsage(dayID: dayID, curRemain: cur.lastRemain,
-                             prevID: prevID, prevRemain: prevID.flatMap { snapshots[$0]?.lastRemain },
+                             prevID: prevID, prevRemain: cur.previousRemain(from: prevID.flatMap { snapshots[$0] }),
                              calendar: calendar)
     }
 
@@ -97,14 +103,15 @@ final class DailyUsageStore: ObservableObject {
         var usages: [DayUsage] = []
         usages.reserveCapacity(ids.count)
         var prevID: String?
-        var prevRemain: Int64?
+        var previous: DaySnapshot?
         for id in ids {
             guard let cur = snapshots[id] else { continue }
             // 只有当天 id 合法才推进 prev：坏 key 不配当别人的基线，否则连带毒死后一天。
-            if let u = Self.makeUsage(dayID: id, curRemain: cur.lastRemain, prevID: prevID, prevRemain: prevRemain, calendar: calendar) {
+            if let u = Self.makeUsage(dayID: id, curRemain: cur.lastRemain, prevID: prevID,
+                                      prevRemain: cur.previousRemain(from: previous), calendar: calendar) {
                 usages.append(u)
                 prevID = id
-                prevRemain = cur.lastRemain
+                previous = cur
             }
         }
         // 倒序按月分组，字典收拢 O(n)

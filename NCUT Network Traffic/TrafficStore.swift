@@ -32,11 +32,11 @@ final class TrafficStore: ObservableObject {
     var menuTitle: String {
         switch status {
         case .ok:
-            if let info { return ByteFormat.menu(info.remainBytes) }
+            if let info { return ByteFormat.menu(info.totalRemainBytes) }
             return "…"
         case .notLoggedIn: return "未登录"
         case .offline: return "离线"
-        case .loading: return info != nil ? ByteFormat.menu(info!.remainBytes) : "查询中"
+        case .loading: return info.map { ByteFormat.menu($0.totalRemainBytes) } ?? "查询中"
         case .unknown: return "…"
         }
     }
@@ -78,9 +78,9 @@ final class TrafficStore: ObservableObject {
                 info = r
                 lastUpdated = r.fetchedAt
                 status = .ok
-                daily.record(remainBytes: r.remainBytes, at: r.fetchedAt)
+                daily.record(totalRemainBytes: r.totalRemainBytes, at: r.fetchedAt)
                 #if DEBUG
-                print("[NCUT] ok remain=\(r.remainBytes) used=\(r.usedBytes)")
+                print("[NCUT] ok totalRemain=\(r.totalRemainBytes) used=\(r.usedBytes)")
                 #endif
             } catch let e as SRunError {
                 switch e {
