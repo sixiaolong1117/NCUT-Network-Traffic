@@ -1,8 +1,15 @@
 import SwiftUI
 import AppKit
+import Combine
+
+private final class ExpandedMonths: ObservableObject {
+    @Published var ids = Set<String>()
+}
 
 struct ContentView: View {
     @EnvironmentObject var store: TrafficStore
+    var onContentSizeChange: () -> Void = {}
+    @StateObject private var expandedMonths = ExpandedMonths()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -25,8 +32,8 @@ struct ContentView: View {
         case .ok:
             if let info = store.info {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("剩余流量").font(.caption).foregroundStyle(.secondary)
-                    Text(ByteFormat.detail(info.remainBytes))
+                    Text("总剩余流量").font(.caption).foregroundStyle(.secondary)
+                    Text(ByteFormat.detail(info.totalRemainBytes))
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                     Text("已用约 \(ByteFormat.detail(info.usedBytes)) · \(info.productName)")
                         .font(.caption).foregroundStyle(.secondary)
@@ -42,7 +49,7 @@ struct ContentView: View {
             Label("离线 / 非校园网", systemImage: "wifi.slash").font(.callout)
             Text(msg).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             if let info = store.info {
-                Text("上次：\(ByteFormat.detail(info.remainBytes))").font(.caption).foregroundStyle(.secondary)
+                Text("上次总剩余 \(ByteFormat.detail(info.totalRemainBytes))").font(.caption).foregroundStyle(.secondary)
             }
         }
         if let t = store.lastUpdated {
@@ -55,6 +62,8 @@ struct ContentView: View {
     private var details: some View {
         if let info = store.info {
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
+                GridRow { Text("剩余流量").foregroundStyle(.secondary); Text(ByteFormat.detail(info.remainBytes)) }
+                GridRow { Text("套餐剩余流量").foregroundStyle(.secondary); Text(ByteFormat.detail(info.packageRemainBytes)) }
                 GridRow { Text("账号").foregroundStyle(.secondary); Text(ByteFormat.masked(info.userName)) }
                 GridRow { Text("IP").foregroundStyle(.secondary); Text(info.onlineIP) }
                 GridRow { Text("在线设备").foregroundStyle(.secondary); Text("\(info.deviceCount) 台") }
@@ -66,7 +75,7 @@ struct ContentView: View {
     @ViewBuilder
     private var dailySection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("按日用量 · 官网余量差值").font(.caption).foregroundStyle(.secondary)
+            Text("按日用量 · 余量差值").font(.caption).foregroundStyle(.secondary)
             let days = store.daily.recentDays(7)
             HStack(spacing: 12) {
                 Text("今日 \(shortUsage(days.last))").font(.caption)
@@ -92,7 +101,17 @@ struct ContentView: View {
                 // ponytail: 历史不限制天数，必须封在滚动区里，否则几年后弹窗被撑出屏幕。
                 ScrollView {
                     ForEach(store.daily.monthlyGroups(), id: \.monthID) { g in
-                        DisclosureGroup("\(monthTitle(g.monthID)) · 共用 \(ByteFormat.detail(g.days.compactMap(\.usedBytes).reduce(0, +)))") {
+                        DisclosureGroup(
+                            "\(monthTitle(g.monthID)) · 共用 \(ByteFormat.detail(g.days.compactMap(\.usedBytes).reduce(0, +)))",
+                            isExpanded: Binding(
+                                get: { expandedMonths.ids.contains(g.monthID) },
+                                set: { isExpanded in
+                                    if isExpanded { expandedMonths.ids.insert(g.monthID) }
+                                    else { expandedMonths.ids.remove(g.monthID) }
+                                    DispatchQueue.main.async { onContentSizeChange() }
+                                }
+                            )
+                        ) {
                             ForEach(g.days) { d in
                                 HStack {
                                     Text(rowLabel(d)).font(.caption).foregroundStyle(.secondary)
